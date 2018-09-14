@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+import os
+import sys
+from glob import glob
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def example(args):
+    EXAMPLE = """{
+  "date": "20170624",
+  "path": "../../../data/2017/bigdog-jun24/",
+  "flats": "*flat*.fits",
+  "arcs": "*arc*.fits",
+  "spec": "*data*.fits",
+  "sets": [
+    [
+      {
+        "prefix": "hd133161",
+        "skip": false,
+        "read_numbered": { "between": [4, 13], "pair": true },
+        "calset": 14,
+        "rap": 20,
+        "bgap": [50, 100],
+        "trace": true,
+        "extract all": true,
+        "scale": true
+      },
+      {
+        "prefix": "sa107-684",
+        "skip": false,
+        "read_numbered": { "between": [46, 55], "pair": true },
+        "calset": 56,
+        "rap": 20,
+        "bgap": [50, 100],
+        "trace": true,
+        "extract all": true,
+        "scale": true
+      },
+      {
+        "prefix": "c2015v2",
+        "skip": false,
+        "read_numbered": { "between": [20, 29], "pair": true },
+        "calset": 40,
+        "rap": 20,
+        "bgap": [90, 120],
+        "peak": { "mode": "AB" },
+        "trace": false,
+        "extract": { "abcombine": true },
+        "extract all": true,
+        "scale": true
+      }
+    ]
+  ]
+}
+"""
+
+    print(EXAMPLE)
+
+
+def read_config(filename):
+    import json
+    with open(filename) as inf:
+        config = json.load(inf)
+    return config
+
+
+def cal(args):
+    from spex60 import Prism60
+
+    config = read_config(args.config)
+
+    spex = Prism60()
+    pat = os.path.join(config['path'], config['flats'])
+    files = glob(pat)
+    print(pat, '\nfound', len(files))
+    spex.process_cal(files)
+
+    pat = os.path.join(config['path'], config['arcs'])
+    files = glob(pat)
+    print(pat, '\nfound', len(files))
+    spex.process_cal(files)
+
+
+def rx_paths(date):
+    cal_path = 'cal-{}/'.format(date)
+    rx_path = 'rx-{}/'.format(date)
+    spec_path = 'spec-{}/'.format(date)
+    for p in (rx_path, spec_path):
+        if not os.path.exists(p):
+            os.mkdir(p)
+    return cal_path, rx_path, spec_path
+
+
+def rx_load_cal(spex, cal_path, obs):
+    n = obs['calset']
+    spex.load_flat('{}flat-{:05d}-{:05d}.fits'.format(cal_path, n, n + 4))
+    spex.load_wavecal('{}wavecal-{:05d}.fits'.format(cal_path, n + 5))
+
+
+def rx_check_ap(spex, files, cal_path, config):
+    for observations in config['sets']:
+        for obs in observations:
+            if obs['skip']:
+                continue
+
+            rx_load_cal(spex, cal_path, obs)
+
+            f = spex.find_numbered(files, **obs['read_numbered'])
+            pair = obs['read_numbered'].get('pair', False)
+            if pair:
+                im, var, header = spex.read(f[:2], pair=True)
+            else:
+                im, var, header = spex.read(f[:1])
+
+            spex.peak(im[0], ex_rap=obs['rap'], bgap=obs['bgap'])
+            plt.title(obs['prefix'])
+
+    plt.show()
+
+
+def rx_observations(spex, files, observations, cal_path, rx_path, spec_path):
+    plt.close('all')
+
+    specfig = plt.figure()
+    specfig.clear()
+    ax = specfig.gca()
+
+    for obs in observations:
+        if obs['skip']:
+            continue
+
+        rx_load_cal(spex, cal_path, obs)
+
+        opts = obs['read_numbered']
+        stack, variances, headers = spex.read_numbered(files, **opts)
+        im, var, header = spex.median_combine(stack, variances, headers)
+
+        fn = rx_path + obs['prefix'] + '.fits'
+        spex.save_image(im, var, header, fn)
+
+        spex.peak(im, ex_rap=obs['rap'], bgap=obs['bgap'])
+        plt.savefig(rx_path + obs['prefix'] + '-profile.png')
+
+        if obs['trace']:
+            spex.trace(im)
+            plt.savefig(rx_path + obs['prefix'] + '-trace.png')
+
+        if obs['extract all']:
+            n = len(stack)
+            for i in range(n):
+                spex.peak(stack[i], ex_rap=obs['rap'], bgap=obs['bgap'],
+                          plot=(i == 0))
+                spex.extract(stack[i], headers[i], obs['rap'],
+                             var=variances[i], bgap=obs['bgap'],
+                             append=True)
+
+            wave = np.ma.mean(spex.wave[-n:], 0)
+            if obs['scale']:
+                scales = spex.scales(spex.spec[-n:])
+                for i in range(-n, 0):
+                    spex.spec[i] = spex.spec[i] * scales[i]
+                    spex.var[i] = spex.spec[i] * scales[i]
+                    spex.h[i]['SPSCALE'] = scales[i], 'spex60 scale factor'
+
+            for i in range(-n, 0):
+                ax.plot(wave, spex.spec[i])
+
+            spec, var, h = spex.median_combine(
+                spex.spec[-n:], spex.var[-n:], spex.h[-n:])
+            ax.plot(wave, spec, color='k')
+
+            spex.save_spectrum(wave, spec, var, h,
+                               spec_path + obs['prefix'] + '.fits',
+                               overwrite=True)
+        else:
+            spex.extract(im, header, obs['rap'], bgap=obs['bgap'],
+                         append=True)
+
+    if spex.spec is None:
+        return
+
+    plt.setp(ax, yscale='log')
+    plt.savefig('{}/spec-{}.png'.format(
+        spec_path, '_'.join([obs['prefix'] for obs in observations])))
+    plt.show()
+
+    spex.save_extracted(path=spec_path, overwrite=True)
+
+
+def rx(args):
+    from spex60 import Prism60
+
+    config = read_config(args.config)
+    cal_path, rx_path, spec_path = rx_paths(config['date'])
+    files = sorted(glob(os.path.join(config['path'], config['spec'])))
+
+    if args.check_ap:
+        spex = Prism60()
+        rx_check_ap(spex, files, cal_path, config)
+        sys.exit()
+
+    for observations in config['sets']:
+        spex = Prism60()
+        rx_observations(spex, files, observations, cal_path, rx_path,
+                        spec_path)
+
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(help='sub-commands')
+
+    parser_example = subparsers.add_parser('example', help='example template')
+    parser_example.set_defaults(func=example)
+
+    parser_rx = subparsers.add_parser('rx', help='reduce spectra')
+    parser_rx.add_argument('config', help='configuration file')
+    parser_rx.add_argument('--check-ap', action='store_true',
+                           help='check aperture definitions')
+    parser_rx.set_defaults(func=rx)
+
+    parser_cal = subparsers.add_parser('cal', help='setup calibration files')
+    parser_cal.add_argument('config', help='configuration file')
+    parser_cal.set_defaults(func=cal)
+
+    args = parser.parse_args()
+    try:
+        getattr(args, 'func')
+    except AttributeError:
+        parser.print_help()
+        sys.exit()
+
+    args.func(args)

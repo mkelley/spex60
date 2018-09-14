@@ -7,6 +7,7 @@ setup(name='spex60',
       author='Michael S. P. Kelley',
       author_email='msk@astro.umd.edu',
       url='https://github.com/mkelley/spex60',
+      scripts=['scripts/spex60'],
       packages=['spex60'],
       license='BSD'
       )

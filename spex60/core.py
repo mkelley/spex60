@@ -127,41 +127,8 @@ class SpeX:
                 stack_AB = np.ma.MaskedArray(stack_AB)
                 var_AB = np.ma.MaskedArray(var_AB)
                 return stack_AB, var_AB, headers_AB
-                # if abba_test:
-                #    # Require ABBA ordering
-                #    if not all([h['BEAM'] == 'A' for h in headers[::4]]):
-                #        raise ValueError('Files not in an ABBA sequence')
-                #    if not all([h['BEAM'] == 'B' for h in headers[1::4]]):
-                #        raise ValueError('Files not in an ABBA sequence')
-                #    if not all([h['BEAM'] == 'B' for h in headers[2::4]]):
-                #        raise ValueError('Files not in an ABBA sequence')
-                #    if not all([h['BEAM'] == 'A' for h in headers[3::4]]):
-                #        raise ValueError('Files not in an ABBA sequence')
 
-                # fancy slicing, stacking, and reshaping to get:
-                #   [0 - 1, 3 - 2, 4 - 5, 7 - 6, ...]
-                # stack_A = stack[::4] - stack[1::4]  # A - B
-                # var_A = var[::4] + var[1::4]
-                # headers_A = [[a, b]
-                #             for a, b in zip(headers[::4], headers[1::4])]
-                # if len(files) > 2:
-                #    stack_B = stack[3::4] - stack[2::4]  # -(B - A)
-                #    stack = np.ma.vstack((stack_A, stack_B))
-
-                #    var_B = var[2::4] + var[3::4]
-                #    var = np.ma.vstack((var_A, var_B))
-
-                #    headers_B = [[a, b]
-                #                 for a, b in zip(headers[3::4], headers[2::4])]
-                #    headers = [None] * (len(headers_A) + len(headers_B))
-                #    headers[::2] = headers_A
-                #    headers[1::2] = headers_B
-                # else:
-                #    stack = stack_A[0]
-                #    var = var_A[0]
-                #    headers = headers_A[0]
-
-            # return stack, var, headers
+            return stack, var, headers
 
         print('Reading {}'.format(files))
         data = fits.open(files, lazy_load_hdus=False)
@@ -235,7 +202,7 @@ class SpeX:
         im.mask += self.mask
         return im, var, h
 
-    def read_numbered(self, files, numbered=None, between=None, **kwargs):
+    def find_numbered(self, files, numbered=None, between=None, **kwargs):
         """Read from list based on observation number.
 
         Requires a file name format that ends with "N.a.fits" or
@@ -289,6 +256,33 @@ class SpeX:
             raise ValueError(
                 'One of ``numbered`` or ``between`` must be provided.')
 
+        return read_list
+
+    def read_numbered(self, files, numbered=None, between=None, **kwargs):
+        """Read from list based on observation number.
+
+        Requires a file name format that ends with "N.a.fits" or
+        "N.b.fits" where N is an integer.
+
+        Parameters
+        ----------
+        files : list
+            List of file names to consider.
+
+        numbered : list
+            List of observation numbers to read.
+
+        between : list
+            Read files with observation number starting with
+            ``min(between)`` and ending with ``max(between)``
+            (inclusive).  May be a list of lists for multiple sets.
+
+        **kwargs
+            Keyword arguments to pass to ``SpeX.read``.
+
+        """
+        read_list = self.find_numbered(
+            files, numbered=numbered, between=between)
         return self.read(read_list, **kwargs)
 
     @classmethod
@@ -538,7 +532,7 @@ class Prism60(SpeX):
 
         # flats
         flats = sorted([f for f in files
-                        if os.path.basename(f).startswith('flat')])
+                        if 'flat' in os.path.basename(f)])
         fset = []
         n_sets = 0
         first_n = -1
@@ -552,9 +546,10 @@ class Prism60(SpeX):
                 fset = []
                 continue
 
-            m = re.findall('flat-([0-9]+).a.fits$', flats[i])
+            m = re.findall('([0-9]+).a.fits$', flats[i])
             if len(m) != 1:
-                raise ValueError('Cannot parse file name: {}'.format(flats[i]))
+                raise ValueError('Cannot parse file name: {}'.format(
+                    flats[i]))
             n = int(m[0])
 
             fset.append(flats[i])
@@ -602,7 +597,7 @@ class Prism60(SpeX):
 
         # arcs
         arcs = sorted([f for f in files
-                       if os.path.basename(f).startswith('arc')])
+                       if 'arc' in os.path.basename(f)])
         for i in range(len(arcs)):
             h = self.read_header(arcs[i])
             tests = (h['OBJECT'] == 'Argon lamp',
@@ -611,7 +606,7 @@ class Prism60(SpeX):
             if not all(tests):
                 continue
 
-            m = re.findall('arc-([0-9]+).a.fits$', arcs[i])
+            m = re.findall('([0-9]+).a.fits$', arcs[i])
             if len(m) != 1:
                 raise ValueError('Cannot parse file name: {}'.format(arcs[i]))
             n = int(m[0])
@@ -877,9 +872,6 @@ class Prism60(SpeX):
                         i = between(x, np.sort(p + s * np.r_[bgap]))
                         ax.plot(x[i], profile[i], color='c', lw=3)
 
-            fig.canvas.draw()
-            fig.show()
-
     def trace(self, im, plot=True):
         """Trace the peak(s) of an object.
 
@@ -933,9 +925,6 @@ class Prism60(SpeX):
                             self.trace_fits[i][-1] + self.peaks[i]]
                 ax.plot(x[j], np.polyval(fit, x[j]), color='r')
 
-            fig.canvas.draw()
-            fig.show()
-
     def _aper(self, y, trace, rap, subsample):
         """Create an aperture array for `extract`."""
         aper = (y >= trace - rap) * (y <= trace + rap)
@@ -943,8 +932,8 @@ class Prism60(SpeX):
         aper = aper.sum(1) / subsample
         return aper
 
-    def extract(self, im, h, rap, bgap=None, bgorder=0, var=None, traces=True,
-                abcombine=True, append=False):
+    def extract(self, im, h, rap, bgap=None, bgorder=0, var=None,
+                traces=True, abcombine=True, append=False):
         """Extract a spectrum from an image.
 
         Extraction positions are from `self.peaks`.
@@ -1150,15 +1139,17 @@ class Prism60(SpeX):
             raise ValueError("No spectra have been extracted")
 
         for i in range(len(self.spec)):
-            n = re.findall('.*-([0-9]+).[ab].fits', self.h[i]['IRAFNAME'],
+            n = re.findall('[-.]([0-9]+).[ab].fits$',
+                           self.h[i]['IRAFNAME'],
                            re.IGNORECASE)[0]
             fn = os.sep.join((path, fnformat.format(data='spec', n=n)))
             self.save_spectrum(self.wave[i], self.spec[i], self.var[i],
                                self.h[i], fn, **kwargs)
 
+            overwrite = kwargs.get('overwrite', False)
             fn = os.sep.join((path, fnformat.format(data='profile', n=n)))
             tab = Table(data=[self.profile[i]], names=['profile'])
-            tab.write(fn + '.csv', format='ascii.ecsv')
+            tab.write(fn + '.csv', format='ascii.ecsv', overwrite=overwrite)
             print('Wrote spec and profile for observation {}'.format(n))
 
     def scales(self, spectra):
