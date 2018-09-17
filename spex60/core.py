@@ -837,6 +837,9 @@ class Prism60(SpeX):
         from mskpy.util import between, gaussfit
 
         profile = self._profile(im)
+        if not any(np.isfinite(profile)):
+            raise ValueError('No data in profile')
+
         if smooth > 0:
             profile = nd.gaussian_filter(profile, smooth)
 
