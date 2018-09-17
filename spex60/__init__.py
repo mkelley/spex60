@@ -2,5 +2,6 @@
 
 __version__ = '0.1'
 
-from . import config
+from . import config, spectrum, core
 from .core import *
+from .spectrum import *
