@@ -115,7 +115,8 @@ def rx_check_ap(spex, files, cal_path, config):
             else:
                 im, var, header = spex.read(f[:1])
 
-            spex.peak(im[0], ex_rap=obs['rap'], bgap=obs['bgap'])
+            spex.peak(im[0], ex_rap=obs['rap'], bgap=obs['bgap'],
+                      **obs.get('peak', {}))
             plt.title(obs['prefix'])
 
     plt.show()
@@ -156,7 +157,8 @@ def rx_observations(spex, files, observations, cal_path, rx_path, spec_path):
         fn = rx_path + obs['prefix'] + '-stack.fits'
         spex.save_image(stack, variances, header, fn)
 
-        spex.peak(im, ex_rap=obs['rap'], bgap=obs['bgap'])
+        spex.peak(im, ex_rap=obs['rap'], bgap=obs['bgap'],
+                  **obs.get('peak', {}))
         plt.savefig(rx_path + obs['prefix'] + '-profile.png')
 
         if obs['trace']:
@@ -167,7 +169,7 @@ def rx_observations(spex, files, observations, cal_path, rx_path, spec_path):
             n = len(stack)
             for i in range(n):
                 spex.peak(stack[i], ex_rap=obs['rap'], bgap=obs['bgap'],
-                          plot=(i == 0))
+                          plot=(i == 0), **obs.get('peak', {}))
                 spex.extract(stack[i], headers[i], obs['rap'],
                              var=variances[i], bgap=obs['bgap'],
                              append=True)
@@ -181,11 +183,17 @@ def rx_observations(spex, files, observations, cal_path, rx_path, spec_path):
                     spex.h[i]['SPSCALE'] = scales[i], 'spex60 scale factor'
 
             for i in range(-n, 0):
-                ax.plot(wave, spex.spec[i])
+                h = headers[len(headers) + i]
+                if isinstance(h, list):
+                    fn = h[0]['IRAFNAME']
+                else:
+                    fn = h['IRAFNAME']
+                ax.plot(wave, spex.spec[i], label=fn)
 
             spec, var, h = spex.median_combine(
                 spex.spec[-n:], spex.var[-n:], spex.h[-n:])
             ax.plot(wave, spec, color='k')
+            ax.legend()
 
             spex.save_spectrum(wave, spec, var, h,
                                spec_path + obs['prefix'] + '.fits',
@@ -212,6 +220,21 @@ def rx(args):
     cal_path, rx_path, spec_path = rx_paths(config['date'])
     files = sorted(glob(os.path.join(config['path'], config['spec'])))
 
+    if args.list:
+        i = 0
+        for observations in config['sets']:
+            print('[{:02d}] {}'.format(
+                i, ','.join([obs['prefix'] for obs in observations])))
+            i += 1
+        sys.exit()
+
+    sets = []
+    for i in list(range(len(config['sets'])))[::-1]:
+        if args.set is not None:
+            # only reduce requested set
+            if i != args.set:
+                config['sets'].pop(i)
+
     if args.check_ap:
         spex = Prism60()
         rx_check_ap(spex, files, cal_path, config)
@@ -236,6 +259,10 @@ if __name__ == '__main__':
     parser_rx.add_argument('config', help='configuration file')
     parser_rx.add_argument('--check-ap', action='store_true',
                            help='check aperture definitions')
+    parser_rx.add_argument('--list', action='store_true',
+                           help='list sets')
+    parser_rx.add_argument('--set', type=int,
+                           help='only reduce this set')
     parser_rx.set_defaults(func=rx)
 
     parser_cal = subparsers.add_parser('cal', help='setup calibration files')
