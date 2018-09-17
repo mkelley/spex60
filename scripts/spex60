@@ -4,6 +4,7 @@ import sys
 from glob import glob
 import numpy as np
 import matplotlib.pyplot as plt
+from astropy.convolution import convolve, Gaussian2DKernel
 
 
 def example(args):
@@ -22,6 +23,7 @@ def example(args):
         "calset": 14,
         "rap": 20,
         "bgap": [50, 100],
+        "smooth": true,
         "trace": true,
         "extract all": true,
         "scale": true
@@ -134,10 +136,25 @@ def rx_observations(spex, files, observations, cal_path, rx_path, spec_path):
 
         opts = obs['read_numbered']
         stack, variances, headers = spex.read_numbered(files, **opts)
+        if obs.get('smooth'):
+            print('smoothing')
+            K = Gaussian2DKernel(obs['smooth'])
+            for i in range(len(stack)):
+                stack[i] = convolve(
+                    stack[i], K, boundary='fill', fill_value=0)
+
+            if np.any(stack == 0):
+                stack.mask += stack == 0
+            if np.any(~np.isfinite(stack)):
+                stack.mask += ~np.isfinite(stack)
+
         im, var, header = spex.median_combine(stack, variances, headers)
 
         fn = rx_path + obs['prefix'] + '.fits'
         spex.save_image(im, var, header, fn)
+
+        fn = rx_path + obs['prefix'] + '-stack.fits'
+        spex.save_image(stack, variances, header, fn)
 
         spex.peak(im, ex_rap=obs['rap'], bgap=obs['bgap'])
         plt.savefig(rx_path + obs['prefix'] + '-profile.png')
@@ -181,7 +198,7 @@ def rx_observations(spex, files, observations, cal_path, rx_path, spec_path):
         return
 
     plt.setp(ax, yscale='log')
-    plt.savefig('{}/spec-{}.png'.format(
+    specfig.savefig('{}/spec-{}.png'.format(
         spec_path, '_'.join([obs['prefix'] for obs in observations])))
     plt.show()
 
