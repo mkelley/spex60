@@ -172,7 +172,7 @@ def rx_observations(spex, files, observations, cal_path, rx_path, spec_path):
                           plot=(i == 0), **obs.get('peak', {}))
                 spex.extract(stack[i], headers[i], obs['rap'],
                              var=variances[i], bgap=obs['bgap'],
-                             append=True)
+                             append=True, **obs.get('extract', {}))
 
             wave = np.ma.mean(spex.wave[-n:], 0)
             if obs['scale']:
@@ -200,7 +200,7 @@ def rx_observations(spex, files, observations, cal_path, rx_path, spec_path):
                                overwrite=True)
         else:
             spex.extract(im, header, obs['rap'], bgap=obs['bgap'],
-                         append=True)
+                         append=True, **obs.get('extract', {}))
 
     if spex.spec is None:
         return
@@ -223,7 +223,7 @@ def rx(args):
     if args.list:
         i = 0
         for observations in config['sets']:
-            print('[{:02d}] {}'.format(
+            print('[{:2d}] {}'.format(
                 i, ','.join([obs['prefix'] for obs in observations])))
             i += 1
         sys.exit()
