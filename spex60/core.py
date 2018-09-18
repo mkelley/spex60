@@ -299,12 +299,14 @@ class SpeX:
         inf.close()
         return h
 
-    def median_combine(self, stack, variances, headers, scale=False,
-                       **kwargs):
-        """Median combine a set of SpeX images or spectra.
+    def _combine(self, method, stack, variances, headers, scale=False,
+                 **kwargs):
+        """Internal combine function for spectra or images.
 
         Parameters
         ----------
+        method : string
+            median or mean
         stack : MaskedArray
         variances : MaskedArray
         headers : list
@@ -334,21 +336,93 @@ class SpeX:
         else:
             clip = sigma_clip(stack, axis=0, **kwargs)
 
-        data = np.ma.median(clip, 0)
-        var = np.ma.mean(variances, 0)
+        if method == 'median':
+            data = np.ma.median(clip, 0)
+            var = np.ma.median(variances, 0)
+        elif method == 'mean':
+            data = np.ma.mean(clip, 0)
+            var = np.ma.mean(variances, 0)
+        else:
+            raise ValueError('Unknown combine value: ' + method)
+
         header = headers[0]
         if isinstance(header, list):
             for i in range(2):
                 header[i]['ITIME'] = sum([h[i]['ITIME'] for h in headers])
                 files = [h[i]['IRAFNAME'] for h in headers]
                 header[i].add_history(
-                    'Median combined files: ' + ','.join(files))
+                    method.capitalize() +
+                    ' combined files: ' +
+                    ','.join(files))
         else:
             header['ITIME'] = sum([h['ITIME'] for h in headers])
             files = [h['IRAFNAME'] for h in headers]
-            header.add_history('Median combined files: ' + ','.join(files))
+            header.add_history(
+                method.capitalize() +
+                ' combined files: ' +
+                ','.join(files))
 
         return data, var, header
+
+    def median_combine(self, stack, variances, headers, scale=False,
+                       **kwargs):
+        """Sigma-clipped median combine a set of SpeX images or spectra.
+
+        Parameters
+        ----------
+        stack : MaskedArray
+        variances : MaskedArray
+        headers : list
+            From ``SpeX.read()``.
+
+        **kwargs
+            ``sigma_clip`` keyword arguments.
+
+        Returns
+        -------
+        data : MaskedArray
+        var : MaskedArray
+            Combined data and variance.
+        header : list or astropy.fits.Header
+            Annotated header(s), based on the first item in the stack.
+
+        Notes
+        -----
+        ITIME and HISTORY are updated in the header.
+
+        """
+        return self._combine('median', stack, variances, headers,
+                             scale=scale, **kwargs)
+
+    def mean_combine(self, stack, variances, headers, scale=False,
+                     **kwargs):
+        """Sigma-clipped mean combine a set of SpeX images or spectra.
+
+        Parameters
+        ----------
+        stack : MaskedArray
+        variances : MaskedArray
+        headers : list
+            From ``SpeX.read()``.
+
+        **kwargs
+            ``sigma_clip`` keyword arguments.
+
+        Returns
+        -------
+        data : MaskedArray
+        var : MaskedArray
+            Combined data and variance.
+        header : list or astropy.fits.Header
+            Annotated header(s), based on the first item in the stack.
+
+        Notes
+        -----
+        ITIME and HISTORY are updated in the header.
+
+        """
+        return self._combine('mean', stack, variances, headers,
+                             scale=scale, **kwargs)
 
     def save_image(self, im, var, h, filename=None, path=''):
         """Save SpeX image data."""

@@ -149,7 +149,13 @@ def rx_observations(spex, files, observations, cal_path, rx_path, spec_path):
             if np.any(~np.isfinite(stack)):
                 stack.mask += ~np.isfinite(stack)
 
-        im, var, header = spex.median_combine(stack, variances, headers)
+        combine = obs.get('combine', 'median')
+        if combine == 'median':
+            im, var, header = spex.median_combine(stack, variances, headers)
+        elif combine == 'mean':
+            im, var, header = spex.mean_combine(stack, variances, headers)
+        else:
+            raise ValueError('Unknown combine value: ' + combine)
 
         fn = rx_path + obs['prefix'] + '.fits'
         spex.save_image(im, var, header, fn)
@@ -190,8 +196,15 @@ def rx_observations(spex, files, observations, cal_path, rx_path, spec_path):
                     fn = h['IRAFNAME']
                 ax.plot(wave, spex.spec[i], label=fn)
 
-            spec, var, h = spex.median_combine(
-                spex.spec[-n:], spex.var[-n:], spex.h[-n:])
+            if combine == 'median':
+                spec, var, h = spex.median_combine(
+                    spex.spec[-n:], spex.var[-n:], spex.h[-n:])
+            elif combine == 'mean':
+                spec, var, h = spex.mean_combine(
+                    spex.spec[-n:], spex.var[-n:], spex.h[-n:])
+            else:
+                raise ValueError('Unknown combine value: ' + combine)
+
             ax.plot(wave, spec, color='k')
             ax.legend()
 
