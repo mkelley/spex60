@@ -23,7 +23,7 @@ def example(args):
         "calset": 14,
         "rap": 20,
         "bgap": [50, 100],
-        "smooth": true,
+        "smooth": 0,
         "trace": true,
         "extract all": true,
         "scale": true
@@ -137,7 +137,7 @@ def rx_observations(spex, files, observations, cal_path, rx_path, spec_path):
 
         opts = obs['read_numbered']
         stack, variances, headers = spex.read_numbered(files, **opts)
-        if obs.get('smooth'):
+        if obs.get('smooth', 0) > 0:
             print('smoothing')
             K = Gaussian2DKernel(obs['smooth'])
             for i in range(len(stack)):
