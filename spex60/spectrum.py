@@ -2,6 +2,7 @@ import numpy as np
 import scipy.ndimage as nd
 from scipy.interpolate import splrep, splev
 import matplotlib.pyplot as plt
+from astropy.table import Table
 from astropy.io import fits, ascii
 
 __all__ = [
@@ -21,7 +22,12 @@ class Spectrum:
     @classmethod
     def from_file(cls, fn):
         spec, h = fits.getdata(fn, header=True)
-        return Spectrum(spec[0], spec[1], spec[2], spec[3].astype(int), h)
+        if len(spec) > 3:
+            return Spectrum(spec[0], spec[1], spec[2], spec[3], h)
+        else:
+            i = np.isfinite(np.prod(spec, 0))
+            return Spectrum(spec[0][i], spec[1][i], spec[2][i],
+                            np.zeros(i.sum(), int), h)
 
     def __call__(self, wave):
         i = self.flags == 0
@@ -56,6 +62,26 @@ class Spectrum:
         scale = np.mean(self.fluxd[i])
         return self / scale
 
+    def rebin(self, R):
+        """Rebin to constant resolving power."""
+        d = 1 + 1 / R
+        dlogw = np.log(self.wave.max() / self.wave.min())
+        n = int(np.ceil(dlogw / np.log(d)))
+        bins = self.wave.min() * d**np.arange(n)
+
+        i = self.flags == 0
+        w = 1.0 / self.unc[i]**2
+        num = np.histogram(self.wave[i], weights=self.fluxd[i] * w,
+                           bins=bins)[0]
+        den = np.histogram(self.wave[i], weights=w, bins=bins)[0]
+        i = den != 0
+        fluxd = num[i] / den[i]
+        unc = 1.0 / np.sqrt(den[i])
+        wave = (bins[:-1] + bins[1:])[i] / 2
+
+        return Spectrum(wave, fluxd, unc, np.zeros(len(wave), int),
+                        self.meta)
+
     def plot(self, ax=None, **kwargs):
         ax = plt.gca() if ax is None else ax
         return ax.plot(self.wave, self.fluxd, **kwargs)
@@ -77,6 +103,21 @@ class Spectrum:
         i = self.flags == 0
         fluxd = nd.gaussian_filter(self.fluxd, width)
         return Spectrum(self.wave, fluxd, self.unc, self.flags, self.meta)
+
+    def save(self, fn, spec_col='fluxd', format='ascii.ecsv', **kwargs):
+        """Save spectrum to a text file."""
+        tab = Table((self.wave, self.fluxd, self.unc, self.flags),
+                    names=('wave', spec_col, 'unc', 'flags'))
+        for k, v in self.meta.items():
+            if k == 'COMMENT':
+                tab.meta['COMMENT'] = tuple(self.meta['COMMENT'])
+                continue
+            elif k == 'HISTORY':
+                tab.meta['HISTORY'] = tuple(self.meta['HISTORY'])
+                continue
+            tab.meta[k] = v
+
+        tab.write(fn, format=format, **kwargs)
 
 
 class PSGTrans(Spectrum):
