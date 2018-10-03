@@ -20,14 +20,35 @@ class Spectrum:
         self.meta = meta
 
     @classmethod
-    def from_file(cls, fn):
-        spec, h = fits.getdata(fn, header=True)
-        if len(spec) > 3:
-            return Spectrum(spec[0], spec[1], spec[2], spec[3], h)
-        else:
-            i = np.isfinite(np.prod(spec, 0))
-            return Spectrum(spec[0][i], spec[1][i], spec[2][i],
-                            np.zeros(i.sum(), int), h)
+    def from_file(cls, fn, format=None):
+        try:
+            if format in (None, 'fits'):
+                spec, h = fits.getdata(fn, header=True)
+                if len(spec) > 3:
+                    return Spectrum(spec[0], spec[1], spec[2], spec[3], h)
+                else:
+                    i = np.isfinite(np.prod(spec, 0))
+                    return Spectrum(spec[0][i], spec[1][i], spec[2][i],
+                                    np.zeros(i.sum(), int), h)
+        except OSError:
+            if format in (None, 'ascii'):
+                spec = ascii.read(fn)
+                if 'fluxd' in spec.colnames:
+                    scol = 'fluxd'
+                elif 'relref' in spec.colnames:
+                    scol = 'relref'
+                else:
+                    raise ValueError(
+                        'spectrum must have a fluxd or relref column')
+
+                wave = spec['wave']
+                s = spec[scol]
+                unc = spec['unc']
+                if 'flag' in spec.colnames:
+                    flag = spec['flag']
+                else:
+                    flag = ~np.isfinite(s)
+                return Spectrum(wave, s, unc, flag, spec.meta)
 
     def __call__(self, wave):
         i = self.flags == 0
@@ -56,7 +77,6 @@ class Spectrum:
             s = self * (1 / denom)
         return s
 
-    @property
     def normalized(self, wrange=[1.60, 1.70]):
         i = (self.wave > min(wrange)) * (self.wave < max(wrange))
         scale = np.mean(self.fluxd[i])
